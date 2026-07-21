@@ -9,6 +9,7 @@ set -e
 # 1. DEFAULT CONFIGURATION VARIABLES
 # ------------------------------------------------------------------------------
 DISTRO="debian"                  # Default distro: debian | kali
+DEBIAN_DESKTOP="xfce"
 KALI_DESKTOP="kali-desktop-xfce"  # Default Kali desktop: xfce | gnome | kde
 INTERACTIVE_DISK="false"         # Default: fully automated disk wiping
 POST_INSTALL="false"             # Default: do not include postinstall sync
@@ -19,10 +20,10 @@ WINDOWS_ISO_DIR="/mnt/c/iso"
 # Credentials & Localization (Placeholders for public repos)
 USER_PASSWORD="your_password"
 USERNAME="your_username"
-USER_FULLNAME="your_name"
+USER_FULLNAME="your_fullname"
 TZ="America/Detroit"
-DEBIAN_VERSION="debian-13.2.0-amd64-DVD-1.iso" # Must match Debian iso
-KALI_VERSION="kali-linux-2026.2-installer-amd64.iso" # Must match Kali iso
+DEBIAN_VERSION="debian-13.2.0-amd64-DVD-1.iso"
+KALI_VERSION="kali-linux-2026.2-installer-amd64.iso"
 
 # ------------------------------------------------------------------------------
 # 2. COMMAND-LINE FLAG PARSER
@@ -95,14 +96,39 @@ SUFFIX=""
 [ -z "${SUFFIX}" ] && SUFFIX="-fullauto"
 
 case "${DISTRO}" in
-  debian)
+   debian)
     SOURCE_ISO="${WINDOWS_ISO_DIR}/${DEBIAN_VERSION}"
     OUTPUT_ISO="${WINDOWS_ISO_DIR}/debian-unattended${SUFFIX}.iso"
 
     MIRROR_HOSTNAME="deb.debian.org"
     MIRROR_DIR="/debian"
-    TASKSEL_TASKS="standard, ssh-server"
-    EXTRA_PKGS="build-essential curl sudo"
+
+    # Map desktop choice to Debian Tasksel task names
+    case "${DEBIAN_DESKTOP}" in
+      gnome)
+        TASKSEL_TASKS="task-gnome-desktop"
+        EXTRA_PKGS="gnome gdm3"
+        ;;
+      kde)
+        TASKSEL_TASKS="task-kde-desktop"
+        EXTRA_PKGS="kde-standard sddm"
+        ;;
+      cinnamon)
+        TASKSEL_TASKS="task-cinnamon-desktop"
+        EXTRA_PKGS="cinnamon lightdm"
+        ;;
+      mate)
+        TASKSEL_TASKS="task-mate-desktop"
+        EXTRA_PKGS="mate-desktop-environment lightdm"
+        ;;
+      xfce|*)
+        TASKSEL_TASKS="task-xfce-desktop"
+        EXTRA_PKGS="xfce4 xfce4-goodies lightdm"
+        ;;
+    esac
+
+    # Common packages for all Debian desktop installs
+    EXTRA_PKGS="${EXTRA_PKGS} xorg curl sudo build-essential"
     DM_PRESEED=""
     ;;
 
@@ -258,10 +284,13 @@ ${PARTITION_CFG}
 
 ${DM_PRESEED}
 
-# Package Selection
-tasksel tasksel/first multiselect ${TASKSEL_TASKS}
+# =====================================================================
+# PACKAGE SELECTION
+# =====================================================================
+d-i tasksel/first multiselect ${TASKSEL_TASKS}
 d-i pkgsel/include string ${EXTRA_PKGS}
 d-i pkgsel/upgrade select none
+d-i popularity-contest/participate boolean false
 
 # Survey
 popularity-contest popularity-contest/participate boolean false
