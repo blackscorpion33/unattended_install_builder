@@ -29,6 +29,8 @@ Automated hybrid ISO generator for unattended Debian and Kali Linux installation
 | `-p, --postinstall` | Sync `/home/docker/core-modules` into the target OS |
 | `-b, --bypass-menu` | Skip boot menu timeout and auto-start installer |
 | `-h, --help` | Show help menu |
+| `-d, --distro <debian\|kali>` | Select target distro (Default: `debian`) |
+| `-g, --desktop <xfce\|gnome\|kde\|cinnamon\|mate>` | Select desktop environment for Debian or Kali (Default: `xfce`) |
 
 ---
 
