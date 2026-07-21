@@ -1,6 +1,6 @@
 # Universal Unattended ISO Builder
 
-Automated hybrid ISO generator for unattended Debian and Kali Linux installations.
+Automated hybrid ISO generator for unattended Debian and Kali Linux installations, using WSL.
 
 ## Features
 
