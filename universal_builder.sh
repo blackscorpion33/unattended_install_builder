@@ -9,21 +9,20 @@ set -e
 # 1. DEFAULT CONFIGURATION VARIABLES
 # ------------------------------------------------------------------------------
 DISTRO="debian"                  # Default distro: debian | kali
-DEBIAN_DESKTOP=""
-KALI_DESKTOP=""                  # Default Kali desktop: empty = headless
+KALI_DESKTOP="kali-desktop-xfce"  # Default Kali desktop: xfce | gnome | kde
 INTERACTIVE_DISK="false"         # Default: fully automated disk wiping
 POST_INSTALL="false"             # Default: do not include postinstall sync
 BYPASS_MENU="false"              # Default: keep normal boot menu timeout
 
-WINDOWS_ISO_DIR="/mnt/c/iso/"
+WINDOWS_ISO_DIR="/mnt/c/iso"
 
-# Credentials & Localization
-USER_PASSWORD="*********"
-USERNAME="**************"
-USER_FULLNAME="*************"
+# Credentials & Localization (Placeholders for public repos)
+USER_PASSWORD="your_password"
+USERNAME="your_username"
+USER_FULLNAME="your_name"
 TZ="America/Detroit"
-DEBIAN_VERSION="debian-13.2.0-amd64-DVD-1.iso"
-KALI_VERSION="kali-linux-2026.2-installer-amd64.iso"
+DEBIAN_VERSION="debian-13.2.0-amd64-DVD-1.iso" # Must match Debian iso
+KALI_VERSION="kali-linux-2026.2-installer-amd64.iso" # Must match Kali iso
 
 # ------------------------------------------------------------------------------
 # 2. COMMAND-LINE FLAG PARSER
@@ -33,7 +32,7 @@ usage() {
   echo ""
   echo "Options:"
   echo "  -d, --distro <debian|kali>      Select target distro (Default: debian)"
-  echo "  -g, --desktop <xfce|gnome|kde> Select desktop environment (Default: Headless/CLI)"
+  echo "  -g, --desktop <xfce|gnome|kde> Select Kali desktop environment (Default: xfce)"
   echo "  -i, --interactive               Prompt for disk selection during setup"
   echo "  -p, --postinstall               Sync core-modules into target post-install"
   echo "  -b, --bypass-menu               Skip boot menu timer and launch installer immediately"
@@ -53,10 +52,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     -g|--desktop)
       DESKTOP_INPUT="${2,,}"
-      DEBIAN_DESKTOP="${DESKTOP_INPUT}"
       case "${DESKTOP_INPUT}" in
         xfce|gnome|kde) KALI_DESKTOP="kali-desktop-${DESKTOP_INPUT}" ;;
-        *) KALI_DESKTOP="${DESKTOP_INPUT}" ;;
+        *) KALI_DESKTOP="${DESKTOP_INPUT}" ;; # Allow full string input
       esac
       shift 2
       ;;
@@ -94,56 +92,35 @@ SUFFIX=""
 [ "${INTERACTIVE_DISK}" = "true" ] && SUFFIX="${SUFFIX}-interactive"
 [ "${POST_INSTALL}" = "true" ] && SUFFIX="${SUFFIX}-postinstall"
 [ "${BYPASS_MENU}" = "true" ] && SUFFIX="${SUFFIX}-nobootmenu"
-[ -n "${DESKTOP_INPUT}" ] && SUFFIX="${SUFFIX}-${DESKTOP_INPUT}"
 [ -z "${SUFFIX}" ] && SUFFIX="-fullauto"
 
 case "${DISTRO}" in
   debian)
-    SOURCE_ISO="${WINDOWS_ISO_DIR}${DEBIAN_VERSION}"
-    OUTPUT_DIR="${WINDOWS_ISO_DIR}debian"
+    SOURCE_ISO="${WINDOWS_ISO_DIR}/${DEBIAN_VERSION}"
+    OUTPUT_DIR="${WINDOWS_ISO_DIR}/debian"
     OUTPUT_ISO="${OUTPUT_DIR}/debian-unattended${SUFFIX}.iso"
-
     MIRROR_HOSTNAME="deb.debian.org"
     MIRROR_DIR="/debian"
-
-    case "${DEBIAN_DESKTOP}" in
-      gnome)    TASKSEL_TASKS="task-gnome-desktop";    EXTRA_PKGS="gnome gdm3 xorg" ;;
-      kde)      TASKSEL_TASKS="task-kde-desktop";      EXTRA_PKGS="kde-standard sddm xorg" ;;
-      cinnamon) TASKSEL_TASKS="task-cinnamon-desktop"; EXTRA_PKGS="cinnamon lightdm xorg" ;;
-      mate)     TASKSEL_TASKS="task-mate-desktop";     EXTRA_PKGS="mate-desktop-environment lightdm xorg" ;;
-      xfce)     TASKSEL_TASKS="task-xfce-desktop";     EXTRA_PKGS="xfce4 xfce4-goodies lightdm xorg" ;;
-      *)
-        # HEADLESS / CLI DEFAULT
-        TASKSEL_TASKS="standard"
-        EXTRA_PKGS=""
-        ;;
-    esac
-
-    # Common CLI packages for all builds
-    EXTRA_PKGS="${EXTRA_PKGS} curl sudo build-essential"
+    TASKSEL_TASKS="standard, ssh-server"
+    EXTRA_PKGS="build-essential curl sudo"
     DM_PRESEED=""
     ;;
 
-  kali)
-    SOURCE_ISO="${WINDOWS_ISO_DIR}${KALI_VERSION}"
-    OUTPUT_DIR="${WINDOWS_ISO_DIR}kali_builds"
+   kali)
+    SOURCE_ISO="${WINDOWS_ISO_DIR}/${KALI_VERSION}"
+    OUTPUT_DIR="${WINDOWS_ISO_DIR}/kali_builds"
     OUTPUT_ISO="${OUTPUT_DIR}/kali-unattended${SUFFIX}.iso"
-
     MIRROR_HOSTNAME="http.kali.org"
     MIRROR_DIR="/kali"
 
-    if [ -n "${KALI_DESKTOP}" ]; then
-      # GUI INSTALL (When -g flag is used)
-      TASKSEL_TASKS="desktop-xfce"
-      EXTRA_PKGS="kali-linux-default ${KALI_DESKTOP} lightdm lightdm-gtk-greeter xorg xserver-xorg-video-all dbus-x11 curl sudo build-essential"
-      DM_PRESEED="d-i lightdm/default-display-manager select lightdm
+    # Correct internal tasksel identifier for Kali Xfce
+    TASKSEL_TASKS="desktop-xfce"
+
+    # Let pkgsel pull the metapackages and display manager stack
+    EXTRA_PKGS="kali-linux-default kali-desktop-xfce lightdm lightdm-gtk-greeter xorg xserver-xorg-video-all dbus-x11 curl sudo build-essential"
+
+    DM_PRESEED="d-i lightdm/default-display-manager select lightdm
 d-i shared/default-x-display-manager select lightdm"
-    else
-      # HEADLESS / CLI DEFAULT (Core tools only, no GUI)
-      TASKSEL_TASKS="standard"
-      EXTRA_PKGS="kali-linux-headless curl sudo build-essential"
-      DM_PRESEED=""
-    fi
     ;;
 
   *)
@@ -169,7 +146,7 @@ d-i partman/confirm boolean true
 d-i partman/confirm_nooverwrite boolean true"
 fi
 
-# Clean post-install late command logic (staging files without auto-executing)
+# Post-install late command logic
 BASE_LATE_CMD="in-target chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}"
 
 if [ "${POST_INSTALL}" = "true" ]; then
@@ -186,7 +163,7 @@ echo "    - Interactive Disk Selection: ${INTERACTIVE_DISK}"
 echo "    - Include Post-Install Sync:  ${POST_INSTALL}"
 echo "    - Bypass Boot Menu:          ${BYPASS_MENU}"
 if [ "${DISTRO}" = "kali" ]; then
-  echo "    - Selected Desktop:           ${KALI_DESKTOP:-None (Headless)}"
+  echo "    - Selected Desktop:           ${KALI_DESKTOP}"
 fi
 
 echo "[+] Installing build dependencies..."
@@ -220,10 +197,12 @@ if [ "${BYPASS_MENU}" = "true" ]; then
 
   # ISOLINUX (Legacy BIOS) adjustment
   if [ -f "${ISO_FILES}/isolinux/isolinux.cfg" ]; then
+    # Set default entry to automated install
     sed -i 's/default .*/default install/g' "${ISO_FILES}/isolinux/isolinux.cfg"
     sed -i 's/timeout .*/timeout 0/g' "${ISO_FILES}/isolinux/isolinux.cfg"
     sed -i 's/prompt .*/prompt 0/g' "${ISO_FILES}/isolinux/isolinux.cfg"
 
+    # Force immediate autoboot
     if ! grep -q "autoboot" "${ISO_FILES}/isolinux/isolinux.cfg"; then
       echo "autoboot install" >> "${ISO_FILES}/isolinux/isolinux.cfg"
     fi
@@ -231,6 +210,7 @@ if [ "${BYPASS_MENU}" = "true" ]; then
 
   # GRUB (UEFI) adjustment
   if [ -f "${ISO_FILES}/boot/grub/grub.cfg" ]; then
+    # Force default entry 0 (or label 'install') and set 0 second timeout
     sed -i 's/set timeout=.*/set timeout=0/g' "${ISO_FILES}/boot/grub/grub.cfg"
     sed -i 's/set default=.*/set default="0"/g' "${ISO_FILES}/boot/grub/grub.cfg"
   fi
@@ -277,13 +257,13 @@ ${PARTITION_CFG}
 
 ${DM_PRESEED}
 
-# =====================================================================
-# PACKAGE SELECTION
-# =====================================================================
-d-i tasksel/first multiselect ${TASKSEL_TASKS}
+# Package Selection
+tasksel tasksel/first multiselect ${TASKSEL_TASKS}
 d-i pkgsel/include string ${EXTRA_PKGS}
 d-i pkgsel/upgrade select none
-d-i popularity-contest/participate boolean false
+
+# Survey
+popularity-contest popularity-contest/participate boolean false
 
 # Bootloader
 d-i grub-installer/only_debian boolean true
@@ -302,7 +282,7 @@ mkdir -p "${TMP_INITRD}"
 cd "${TMP_INITRD}"
 gzip -d < "${ISO_FILES}/install.amd/initrd.gz" | cpio --extract --make-directories --no-absolute-filenames --unconditional 2>/dev/null || true
 cp "${WORKSPACE}/preseed.cfg" ./preseed.cfg
-find . | cpio -H newc --create 2>/dev/null | gzip -9 > "${ISO_FILES}/install.amd/initrd.gz"
+sudo bash -c "find . | cpio -H newc --create 2>/dev/null | gzip -9 > '${ISO_FILES}/install.amd/initrd.gz'"
 
 cd "${WORKSPACE}"
 sudo rm -rf "${TMP_INITRD}"
