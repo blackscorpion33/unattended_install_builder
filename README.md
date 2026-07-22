@@ -4,7 +4,7 @@ Automated hybrid ISO generator for unattended Debian and Kali Linux installation
 
 ## Features
 
-* **Debian & Kali Support** *(More coming later)*  
+* **Debian & Kali Support** 
   Build unattended installers for either distro using the same script.
 * **Automated or Interactive Disk Selection**  
   Choose full auto-wipe automation or prompt for disk selection during install.
