@@ -8,21 +8,22 @@ set -e
 # ------------------------------------------------------------------------------
 # 1. DEFAULT CONFIGURATION VARIABLES
 # ------------------------------------------------------------------------------
-DISTRO="debian"                  # Default distro: debian | kali
-KALI_DESKTOP="kali-desktop-xfce"  # Default Kali desktop: xfce | gnome | kde
-INTERACTIVE_DISK="false"         # Default: fully automated disk wiping
-POST_INSTALL="false"             # Default: do not include postinstall sync
-BYPASS_MENU="false"              # Default: keep normal boot menu timeout
+DISTRO="debian"
+DESKTOP_INPUT=""
+KALI_DESKTOP="kali-desktop-xfce"
+INTERACTIVE_DISK="false"
+POST_INSTALL="false"
+BYPASS_MENU="false"
 
-WINDOWS_ISO_DIR="/mnt/c/iso"
+WINDOWS_ISO_DIR="/mnt/e/iso"
 
-# Credentials & Localization (Placeholders for public repos)
-USER_PASSWORD="your_password"
-USERNAME="your_username"
-USER_FULLNAME="your_name"
+USER_PASSWORD="************"
+USERNAME="*****************"
+USER_FULLNAME="******************"
 TZ="America/Detroit"
-DEBIAN_VERSION="debian-13.2.0-amd64-DVD-1.iso" # Must match Debian iso
-KALI_VERSION="kali-linux-2026.2-installer-amd64.iso" # Must match Kali iso
+
+DEBIAN_VERSION="debian-13.2.0-amd64-DVD-1.iso"
+KALI_VERSION="kali-linux-2026.2-installer-amd64.iso"
 
 # ------------------------------------------------------------------------------
 # 2. COMMAND-LINE FLAG PARSER
@@ -31,31 +32,23 @@ usage() {
   echo "Usage: $0 [OPTIONS]"
   echo ""
   echo "Options:"
-  echo "  -d, --distro <debian|kali>      Select target distro (Default: debian)"
-  echo "  -g, --desktop <xfce|gnome|kde> Select Kali desktop environment (Default: xfce)"
-  echo "  -i, --interactive               Prompt for disk selection during setup"
-  echo "  -p, --postinstall               Sync core-modules into target post-install"
-  echo "  -b, --bypass-menu               Skip boot menu timer and launch installer immediately"
-  echo "  -h, --help                      Show this help menu"
-  echo ""
-  echo "Examples:"
-  echo "  $0 --distro debian --bypass-menu"
-  echo "  $0 --distro kali --desktop gnome --interactive --postinstall --bypass-menu"
+  echo "  -d, --distro <debian|kali>"
+  echo "  -g, --desktop <xfce|gnome|kde|mate|lxde|lxqt|cinnamon>"
+  echo "  -i, --interactive"
+  echo "  -p, --postinstall"
+  echo "  -b, --bypass-menu"
+  echo "  -h, --help"
   exit 0
 }
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     -d|--distro)
-      DISTRO="${2,,}" # Convert to lowercase
+      DISTRO="${2,,}"
       shift 2
       ;;
     -g|--desktop)
       DESKTOP_INPUT="${2,,}"
-      case "${DESKTOP_INPUT}" in
-        xfce|gnome|kde) KALI_DESKTOP="kali-desktop-${DESKTOP_INPUT}" ;;
-        *) KALI_DESKTOP="${DESKTOP_INPUT}" ;; # Allow full string input
-      esac
       shift 2
       ;;
     -i|--interactive)
@@ -87,11 +80,23 @@ TMP_INITRD="${WORKSPACE}/tmp_initrd"
 # ------------------------------------------------------------------------------
 # 3. DISTRO, PARTITIONING & POSTINSTALL LOGIC
 # ------------------------------------------------------------------------------
-# Generate dynamically formatted filename suffix
 SUFFIX=""
+
+# Add desktop tag for Debian
+if [ "${DISTRO}" = "debian" ] && [ -n "${DESKTOP_INPUT}" ]; then
+  SUFFIX="${SUFFIX}-${DESKTOP_INPUT}"
+fi
+
+# Add desktop tag for Kali
+if [ "${DISTRO}" = "kali" ]; then
+  DT_SHORT="${KALI_DESKTOP#kali-desktop-}"
+  SUFFIX="${SUFFIX}-${DT_SHORT}"
+fi
+
 [ "${INTERACTIVE_DISK}" = "true" ] && SUFFIX="${SUFFIX}-interactive"
 [ "${POST_INSTALL}" = "true" ] && SUFFIX="${SUFFIX}-postinstall"
 [ "${BYPASS_MENU}" = "true" ] && SUFFIX="${SUFFIX}-nobootmenu"
+
 [ -z "${SUFFIX}" ] && SUFFIX="-fullauto"
 
 case "${DISTRO}" in
@@ -101,44 +106,107 @@ case "${DISTRO}" in
     OUTPUT_ISO="${OUTPUT_DIR}/debian-unattended${SUFFIX}.iso"
     MIRROR_HOSTNAME="deb.debian.org"
     MIRROR_DIR="/debian"
-    TASKSEL_TASKS="standard, ssh-server"
-    EXTRA_PKGS="build-essential curl sudo"
-    DM_PRESEED=""
+
+    # Debian desktop mapping
+    case "${DESKTOP_INPUT}" in
+      gnome)
+        TASKSEL_TASKS="gnome-desktop"
+        EXTRA_PKGS="gnome-core gdm3 build-essential curl sudo"
+        DM_NAME="gdm3"
+        ;;
+      kde)
+        TASKSEL_TASKS="kde-desktop"
+        EXTRA_PKGS="kde-standard sddm build-essential curl sudo"
+        DM_NAME="sddm"
+        ;;
+      xfce)
+        TASKSEL_TASKS="xfce-desktop"
+        EXTRA_PKGS="xfce4 lightdm lightdm-gtk-greeter build-essential curl sudo"
+        DM_NAME="lightdm"
+        ;;
+      cinnamon)
+        TASKSEL_TASKS="cinnamon-desktop"
+        EXTRA_PKGS="cinnamon gdm3 build-essential curl sudo"
+        DM_NAME="gdm3"
+        ;;
+      mate)
+        TASKSEL_TASKS="mate-desktop"
+        EXTRA_PKGS="mate-desktop-environment lightdm build-essential curl sudo"
+        DM_NAME="lightdm"
+        ;;
+      lxqt)
+        TASKSEL_TASKS="lxqt-desktop"
+        EXTRA_PKGS="lxqt sddm build-essential curl sudo"
+        DM_NAME="sddm"
+        ;;
+      lxde)
+        TASKSEL_TASKS="lxde-desktop"
+        EXTRA_PKGS="lxde lightdm build-essential curl sudo"
+        DM_NAME="lightdm"
+        ;;
+      *)
+        TASKSEL_TASKS="standard, ssh-server"
+        EXTRA_PKGS="build-essential curl sudo"
+        DM_NAME=""
+        ;;
+    esac
+
+    if [ -n "${DM_NAME}" ]; then
+      DM_PRESEED="d-i ${DM_NAME}/default-display-manager select ${DM_NAME}
+d-i shared/default-x-display-manager select ${DM_NAME}"
+    else
+      DM_PRESEED=""
+    fi
     ;;
 
-   kali)
+  kali)
     SOURCE_ISO="${WINDOWS_ISO_DIR}/${KALI_VERSION}"
     OUTPUT_DIR="${WINDOWS_ISO_DIR}/kali_builds"
     OUTPUT_ISO="${OUTPUT_DIR}/kali-unattended${SUFFIX}.iso"
     MIRROR_HOSTNAME="http.kali.org"
     MIRROR_DIR="/kali"
 
-    # Correct internal tasksel identifier for Kali Xfce
-    TASKSEL_TASKS="desktop-xfce"
+    case "${KALI_DESKTOP}" in
+      kali-desktop-gnome)
+        TASKSEL_TASKS="desktop-gnome"
+        DESKTOP_PKG="kali-desktop-gnome"
+        DM_PKG="gdm3"
+        DM_NAME="gdm3"
+        ;;
+      kali-desktop-kde)
+        TASKSEL_TASKS="desktop-kde"
+        DESKTOP_PKG="kali-desktop-kde"
+        DM_PKG="sddm plasma-workspace"
+        DM_NAME="sddm"
+        ;;
+      *)
+        TASKSEL_TASKS="desktop-xfce"
+        DESKTOP_PKG="kali-desktop-xfce"
+        DM_PKG="lightdm lightdm-gtk-greeter"
+        DM_NAME="lightdm"
+        ;;
+    esac
 
-    # Let pkgsel pull the metapackages and display manager stack
-    EXTRA_PKGS="kali-linux-default kali-desktop-xfce lightdm lightdm-gtk-greeter xorg xserver-xorg-video-all dbus-x11 curl sudo build-essential"
+    EXTRA_PKGS="kali-linux-default ${DESKTOP_PKG} ${DM_PKG} xorg xserver-xorg-video-all dbus-x11 curl sudo build-essential"
 
-    DM_PRESEED="d-i lightdm/default-display-manager select lightdm
-d-i shared/default-x-display-manager select lightdm"
+    DM_PRESEED="d-i ${DM_NAME}/default-display-manager select ${DM_NAME}
+d-i shared/default-x-display-manager select ${DM_NAME}"
     ;;
 
   *)
-    echo "[-] ERROR: Unsupported distro '${DISTRO}'. Must be 'debian' or 'kali'."
+    echo "[-] ERROR: Unsupported distro '${DISTRO}'."
     exit 1
     ;;
 esac
 
 # Partitioning logic
 if [ "${INTERACTIVE_DISK}" = "true" ]; then
-  PARTITION_CFG="# Partitioning: Interactive disk prompt
-d-i partman-auto/method string regular
+  PARTITION_CFG="d-i partman-auto/method string regular
 d-i partman-auto/choose_recipe select atomic
 d-i partman-partitioning/confirm_write_new_label boolean true
 d-i partman/confirm boolean true"
 else
-  PARTITION_CFG="# Partitioning: Automated wipe
-d-i partman-auto/method string regular
+  PARTITION_CFG="d-i partman-auto/method string regular
 d-i partman-auto/choose_recipe select atomic
 d-i partman-partitioning/confirm_write_new_label boolean true
 d-i partman/choose_partition select finish
@@ -146,7 +214,6 @@ d-i partman/confirm boolean true
 d-i partman/confirm_nooverwrite boolean true"
 fi
 
-# Post-install late command logic
 BASE_LATE_CMD="in-target chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}"
 
 if [ "${POST_INSTALL}" = "true" ]; then
@@ -159,73 +226,58 @@ fi
 # 4. BUILD EXECUTION
 # ------------------------------------------------------------------------------
 echo "[+] Starting build for: ${DISTRO^^}"
-echo "    - Interactive Disk Selection: ${INTERACTIVE_DISK}"
-echo "    - Include Post-Install Sync:  ${POST_INSTALL}"
-echo "    - Bypass Boot Menu:          ${BYPASS_MENU}"
-if [ "${DISTRO}" = "kali" ]; then
-  echo "    - Selected Desktop:           ${KALI_DESKTOP}"
-fi
+echo "    - Desktop: ${DESKTOP_INPUT:-none}"
+echo "    - Interactive Disk: ${INTERACTIVE_DISK}"
+echo "    - Postinstall: ${POST_INSTALL}"
+echo "    - Bypass Menu: ${BYPASS_MENU}"
 
-echo "[+] Installing build dependencies..."
 sudo apt update && sudo apt install -y xorriso cpio gzip
 
-echo "[+] Cleaning previous workspace..."
 rm -rf "${WORKSPACE}"
 mkdir -p "${ISO_FILES}"
 
-echo "[+] Extracting source ISO: ${SOURCE_ISO}..."
-if [ ! -f "${SOURCE_ISO}" ]; then
-    echo "[-] ERROR: Source ISO missing at ${SOURCE_ISO}"
-    exit 1
-fi
+echo "[+] Extracting source ISO..."
 xorriso -osirrox on -indev "${SOURCE_ISO}" -extract / "${ISO_FILES}"
 
-# Copy docker core-modules into staging ISO directory if postinstall is enabled
 if [ "${POST_INSTALL}" = "true" ]; then
-  echo "[+] Syncing docker core modules into ISO staging area..."
   mkdir -p "${ISO_FILES}/custom/core-modules"
-  if [ -d "/home/docker/core-modules" ]; then
-    cp -r /home/docker/core-modules/. "${ISO_FILES}/custom/core-modules/"
-  else
-    echo "[-] WARNING: /home/docker/core-modules directory not found on host. Creating empty directory."
-  fi
+  cp -r /home/docker/core-modules/. "${ISO_FILES}/custom/core-modules/" || true
 fi
 
-# Modify bootloader configuration if menu bypass is requested
 if [ "${BYPASS_MENU}" = "true" ]; then
-  echo "[+] Bypassing boot menu timeouts..."
-
-  # ISOLINUX (Legacy BIOS) adjustment
   if [ -f "${ISO_FILES}/isolinux/isolinux.cfg" ]; then
-    # Set default entry to automated install
     sed -i 's/default .*/default install/g' "${ISO_FILES}/isolinux/isolinux.cfg"
     sed -i 's/timeout .*/timeout 0/g' "${ISO_FILES}/isolinux/isolinux.cfg"
     sed -i 's/prompt .*/prompt 0/g' "${ISO_FILES}/isolinux/isolinux.cfg"
-
-    # Force immediate autoboot
-    if ! grep -q "autoboot" "${ISO_FILES}/isolinux/isolinux.cfg"; then
-      echo "autoboot install" >> "${ISO_FILES}/isolinux/isolinux.cfg"
-    fi
   fi
 
-  # GRUB (UEFI) adjustment
   if [ -f "${ISO_FILES}/boot/grub/grub.cfg" ]; then
-    # Force default entry 0 (or label 'install') and set 0 second timeout
     sed -i 's/set timeout=.*/set timeout=0/g' "${ISO_FILES}/boot/grub/grub.cfg"
     sed -i 's/set default=.*/set default="0"/g' "${ISO_FILES}/boot/grub/grub.cfg"
   fi
 fi
 
-echo "[+] Generating preseed configuration..."
+echo "[+] Generating preseed..."
 cat << EOF > "${WORKSPACE}/preseed.cfg"
-# Localization
-d-i debian-installer/locale string en_US
+# ------------------------------------------------------------------------------
+# NON-INTERACTIVE AUTOMATION OVERRIDES
+# ------------------------------------------------------------------------------
+d-i debian-installer/locale string en_US.UTF-8
+d-i console-setup/ask_detect boolean false
 d-i keyboard-configuration/xkb-keymap select us
 
-# Network
+# Prevent CD-ROM scanning prompts and disable additional CD checks
+d-i apt-setup/cdrom/set-first boolean false
+d-i apt-setup/cdrom/set-next boolean false
+d-i apt-setup/cdrom/set-failed boolean false
+d-i apt-setup/disable-cdrom-entries boolean true
+d-i apt-setup/services-select multiselect security, updates
+
+# Network Setup
 d-i netcfg/choose_interface select auto
 d-i netcfg/get_hostname string ${DISTRO}-node
 d-i netcfg/get_domain string local
+d-i netcfg/wireless_wep string
 
 # Mirror Settings
 d-i apt-setup/use_mirror boolean true
@@ -234,12 +286,6 @@ d-i mirror/country string manual
 d-i mirror/http/hostname string ${MIRROR_HOSTNAME}
 d-i mirror/http/directory string ${MIRROR_DIR}
 d-i mirror/http/proxy string
-
-# Prevent Extra CD Prompts
-d-i apt-setup/cdrom/set-first boolean false
-d-i apt-setup/cdrom/set-next boolean false
-d-i apt-setup/cdrom/set-failed boolean false
-d-i apt-setup/disable-cdrom-entries boolean true
 
 # Accounts
 d-i passwd/root-login boolean false
@@ -257,44 +303,37 @@ ${PARTITION_CFG}
 
 ${DM_PRESEED}
 
-# Package Selection
+# Package Selection & Desktop
 tasksel tasksel/first multiselect ${TASKSEL_TASKS}
 d-i pkgsel/include string ${EXTRA_PKGS}
 d-i pkgsel/upgrade select none
-
-# Survey
 popularity-contest popularity-contest/participate boolean false
 
-# Bootloader
+# Bootloader (Suppress drive selection prompt)
 d-i grub-installer/only_debian boolean true
 d-i grub-installer/with_other_os boolean true
 d-i grub-installer/bootdev string default
 
-# Post-Install Action
+# Post-Install Action & Auto Reboot
 ${LATE_CMD}
-
-# Auto Reboot
 d-i finish-install/reboot_in_progress note
 EOF
 
-echo "[+] Injecting preseed into initrd..."
+echo "[+] Injecting preseed..."
 mkdir -p "${TMP_INITRD}"
 cd "${TMP_INITRD}"
-gzip -d < "${ISO_FILES}/install.amd/initrd.gz" | cpio --extract --make-directories --no-absolute-filenames --unconditional 2>/dev/null || true
+gzip -d < "${ISO_FILES}/install.amd/initrd.gz" | cpio --extract --make-directories --no-absolute-filenames --unconditional
 cp "${WORKSPACE}/preseed.cfg" ./preseed.cfg
-sudo bash -c "find . | cpio -H newc --create 2>/dev/null | gzip -9 > '${ISO_FILES}/install.amd/initrd.gz'"
-
+sudo bash -c "find . | cpio -H newc --create | gzip -9 > '${ISO_FILES}/install.amd/initrd.gz'"
 cd "${WORKSPACE}"
 sudo rm -rf "${TMP_INITRD}"
 
-echo "[+] Updating integrity hashes..."
 chmod +w "${ISO_FILES}/md5sum.txt"
 (cd "${ISO_FILES}" && find . -type f ! -name "md5sum.txt" ! -path "./isolinux/*" -exec md5sum {} + > md5sum.txt)
 
-echo "[+] Ensuring output directory exists..."
 mkdir -p "${OUTPUT_DIR}"
 
-echo "[+] Compiling hybrid bootable ISO..."
+echo "[+] Building ISO..."
 xorriso -as mkisofs \
   -r -V "${DISTRO^^}_UNAT" \
   -o "${OUTPUT_ISO}" \
