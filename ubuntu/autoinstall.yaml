@@ -1,0 +1,165 @@
+#cloud-config
+autoinstall:
+  version: 1
+  interactive-sections: []
+  
+  packages:
+    - wireguard
+    - curl
+    - wget
+    - ca-certificates
+    - gnupg
+    - lsb-release
+    - tcpdump
+    - bind9-dnsutils
+    - git
+    - unzip
+    - zip
+    - rsync
+    - jq
+    - net-tools
+    - btop
+    - cifs-utils
+    - jdupes
+    - grep
+    - sed
+    - qrencode
+    - python3-pylast
+    - python3-pip
+    - sqlite3
+    - ncdu
+    - iotop
+    - samba
+    - rsyslog
+    - python3-flask
+    - pv
+
+  late-commands:
+    - curtin in-target -- mkdir -p /home/docker
+    # Insert token right before your domain name
+    - curtin in-target -- git clone https://gitea.yourdomain.com/youruser/core-modules.git /home/docker/core-modules    - curtin in-target -- chmod +x /home/docker/core-modules/postinstall/postinstall.sh
+    - curtin in-target -- bash /home/docker/core-modules/postinstall/postinstall.sh
+
+  apt:
+    disable_components: []
+    fallback: offline-install
+    geoip: true
+    preserve_sources_list: false
+    
+  codecs:
+    install: false
+  drivers:
+    install: false
+    
+  identity:
+    hostname: ubuntu1
+    realname: your_real_name
+    username: your_username
+    # Password set to: "ubuntu" (Change this or generate your own hash with `openssl passwd -6`)
+    password: "your_hashed_password"
+    
+  kernel:
+    package: linux-generic
+  keyboard:
+    layout: us
+    toggle: null
+    variant: ''
+  locale: en_US.UTF-8
+  
+  network:
+    version: 2
+    ethernets:
+      eth0:
+        match:
+          name: "e*"
+        dhcp4: true
+        dhcp6: true
+
+  oem:
+    install: auto
+  source:
+    id: ubuntu-server
+    search_drivers: false
+    
+  ssh:
+    allow-pw: true
+    authorized-keys: []
+    install-server: true
+    
+  storage:
+    multipath: false
+    config:
+    - type: disk
+      id: disk-0
+      match:
+        size: largest
+      wipe: superblock-recursive
+      preserve: false
+      grub_device: true
+      ptable: gpt
+      
+    - type: partition
+      id: partition-0
+      device: disk-0
+      size: 1M
+      flag: bios_grub
+      number: 1
+      preserve: false
+      grub_device: false
+      
+    - type: partition
+      id: partition-1
+      device: disk-0
+      size: 2G
+      wipe: superblock
+      number: 2
+      preserve: false
+      grub_device: false
+      
+    - type: format
+      id: format-0
+      fstype: ext4
+      volume: partition-1
+      preserve: false
+      
+    - type: partition
+      id: partition-2
+      device: disk-0
+      size: -1
+      wipe: superblock
+      number: 3
+      preserve: false
+      grub_device: false
+      
+    - type: lvm_volgroup
+      id: lvm_volgroup-0
+      name: ubuntu-vg
+      devices:
+      - partition-2
+      preserve: false
+      
+    - type: lvm_partition
+      id: lvm_partition-0
+      name: ubuntu-lv
+      volgroup: lvm_volgroup-0
+      size: -1
+      wipe: superblock
+      preserve: false
+      
+    - type: format
+      id: format-1
+      fstype: ext4
+      volume: lvm_partition-0
+      preserve: false
+      
+    - type: mount
+      id: mount-1
+      path: /
+      device: format-1
+      
+    - type: mount
+      id: mount-0
+      path: /boot
+      device: format-0
+      
+  updates: security
