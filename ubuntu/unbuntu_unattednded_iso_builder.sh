@@ -5,9 +5,9 @@ set -euo pipefail
 # Ubuntu Server Autoinstall ISO Builder
 # ============================================================
 
-ISO_IN="/mnt/e/iso/ubuntu-26.04-live-server-amd64.iso"
+ISO_IN="/mnt/e/iso/ubuntu/ubuntu-26.04-live-server-amd64.iso"
 OUT_DIR="/mnt/e/iso/ubuntu/complete"
-ISO_OUT="${OUT_DIR}/ubuntu-server.iso"
+ISO_OUT="${OUT_DIR}/ubuntu-server-preseed.iso"
 WORKDIR="iso-work"
 YAML_FILE="/mnt/e/iso/ubuntu/autoinstall.yaml"
 
