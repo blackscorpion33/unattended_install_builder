@@ -10,6 +10,7 @@ A lightweight Bash script pipeline to generate unattended, fully automated **Ubu
 * **Declarative Package Baking:** Pre-installs required server packages (`wireguard`, `fail2ban`, `btop`, `docker` prerequisites, etc.) directly during OS creation.
 * **Gitea Integration:** Pulls post-install modules (`core-modules`) dynamically from your self-hosted Gitea instance via `late-commands`.
 * **Clean Workspace Trap:** Uses a Bash `EXIT` trap to guarantee temporary extraction directories (`iso-work`) are cleaned up even on script failure or `Ctrl+C`.
+* **Don't forget to adjust the static ip to your neeeds
 
 ---
 
