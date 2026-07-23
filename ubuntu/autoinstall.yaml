@@ -33,6 +33,7 @@ autoinstall:
     - python3-flask
     - pv
     - age
+    - openssh-server
 
   late-commands:
     - curtin in-target -- mkdir -p /home/docker
@@ -55,7 +56,7 @@ autoinstall:
     realname: your_name
     username: your_username
     # Password set to: "ubuntu" (Change this or generate your own hash with `openssl passwd -6`)
-    password: "your_hashed_password"
+    password: "your_hashed_passowrd"
     
   kernel:
     package: linux-generic
@@ -175,4 +176,5 @@ autoinstall:
       device: format-0
       
   updates: security
+
 
