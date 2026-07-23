@@ -38,7 +38,6 @@ autoinstall:
     - curtin in-target -- mkdir -p /home/docker
     - cp -r /cdrom/postinstall/core-modules /target/home/docker/core-modules
     - curtin in-target -- chmod +x /home/docker/core-modules/postinstall/postinstall.sh
-    #- curtin in-target -- bash /home/docker/core-modules/postinstall/postinstall.sh
 
   apt:
     disable_components: []
@@ -53,7 +52,7 @@ autoinstall:
     
   identity:
     hostname: ubuntu1
-    realname: your_real_name
+    realname: your_name
     username: your_username
     # Password set to: "ubuntu" (Change this or generate your own hash with `openssl passwd -6`)
     password: "your_hashed_password"
@@ -66,14 +65,27 @@ autoinstall:
     variant: ''
   locale: en_US.UTF-8
   
+  # ==============================================================================
+  # NETWORK CONFIGURATION (NETPLAN SYNTAX)
+  # ==============================================================================
   network:
     version: 2
     ethernets:
+      # Match primary wired interface (e.g., eth0, enp0s3, or wildcard match)
       eth0:
         match:
-          name: "e*"
-        dhcp4: true
-        dhcp6: true
+          name: en*
+        dhcp4: false
+        dhcp6: false
+        addresses:
+          - 192.168.1.234/24
+        routes:
+          - to: default
+            via: 192.168.1.1
+        nameservers:
+          addresses:
+            - 1.1.1.1
+            - 1.0.0.1
 
   oem:
     install: auto
