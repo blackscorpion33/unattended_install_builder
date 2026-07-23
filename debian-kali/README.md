@@ -16,6 +16,7 @@ Automated hybrid ISO generator for unattended Debian and Kali Linux installation
   `preseed.cfg` is generated on-the-fly based on flags and distro selection.
 * **Clean ISO Rebuild Pipeline**  
   Extract → Modify → Inject → Repack → Output.
+* **Don't forget to adjust the static ip to your neeeds
 
 ---
 
