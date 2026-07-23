@@ -5,9 +5,9 @@ set -euo pipefail
 # Ubuntu Server Autoinstall ISO Builder
 # ============================================================
 
-ISO_IN="/mnt/e/iso/ubuntu/ubuntu-26.04-live-server-amd64.iso"
+ISO_IN="/mnt/e/iso/ubuntu-26.04-live-server-amd64.iso"
 OUT_DIR="/mnt/e/iso/ubuntu/complete"
-ISO_OUT="${OUT_DIR}/ubuntu-server-autoinstall-preseed.iso"
+ISO_OUT="${OUT_DIR}/ubuntu-server.iso"
 WORKDIR="iso-work"
 YAML_FILE="/mnt/e/iso/ubuntu/autoinstall.yaml"
 
@@ -24,6 +24,9 @@ trap 'echo ">>> Cleaning up working directory..."; rm -rf "$WORKDIR"' EXIT
 echo ">>> Extracting original ISO contents..."
 xorriso -osirrox on -indev "$ISO_IN" -extract / "$WORKDIR" >/dev/null 2>&1
 chmod -R u+w "$WORKDIR"
+
+mkdir -p "$WORKDIR/postinstall"
+cp -r /mnt/e/iso/ubuntu/core-modules "$WORKDIR/postinstall/"
 
 echo ">>> Embedding autoinstall config..."
 mkdir -p "$WORKDIR/nocloud" "$WORKDIR/autoinstall"
