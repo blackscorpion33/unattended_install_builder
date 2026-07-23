@@ -20,7 +20,6 @@ autoinstall:
     - net-tools
     - btop
     - cifs-utils
-    - jdupes
     - grep
     - sed
     - qrencode
@@ -33,13 +32,13 @@ autoinstall:
     - rsyslog
     - python3-flask
     - pv
+    - age
 
   late-commands:
     - curtin in-target -- mkdir -p /home/docker
-    # Insert token right before your domain name
-    - curtin in-target -- git clone https://gitea.yourdomain.com/youruser/core-modules.git /home/docker/core-modules    
+    - cp -r /cdrom/postinstall/core-modules /target/home/docker/core-modules
     - curtin in-target -- chmod +x /home/docker/core-modules/postinstall/postinstall.sh
-    #- curtin in-target -- bash /home/docker/core-modules/postinstall/postinstall.sh #causes failure on install
+    #- curtin in-target -- bash /home/docker/core-modules/postinstall/postinstall.sh
 
   apt:
     disable_components: []
@@ -164,3 +163,4 @@ autoinstall:
       device: format-0
       
   updates: security
+
