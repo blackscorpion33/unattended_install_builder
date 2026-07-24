@@ -16,20 +16,20 @@ BYPASS_MENU="false"
 
 WINDOWS_ISO_DIR="/mnt/e/iso"
 
-USER_PASSWORD="your_password" #change
-USERNAME="your_username" #change
-USER_FULLNAME="your_real_name" #change
-TZ="America/Detroit" #change to your timezone
+USER_PASSWORD="your_password"
+USERNAME="your_username"
+USER_FULLNAME="your_name"
+TZ="America/Detroit"
 
 DEBIAN_VERSION="debian-13.2.0-amd64-DVD-1.iso"
 KALI_VERSION="kali-linux-2026.2-installer-amd64.iso"
 
 # Node Configuration
-NODE_HOST="debian-xxxx"
-NODE_IP="192.168.1.xxx"
+NODE_HOST="debian236"
+NODE_IP="192.168.1.236"
 NET_MASK="255.255.255.0"
 NET_GATEWAY="192.168.1.1"
-NET_DNS="1.1.1.1"
+NET_DNS="192.168.1.177 1.1.1.1"
 
 # ------------------------------------------------------------------------------
 # 2. COMMAND-LINE FLAG PARSER
@@ -113,7 +113,6 @@ case "${DISTRO}" in
     MIRROR_HOSTNAME="deb.debian.org"
     MIRROR_DIR="/debian"
 
-    # Debian desktop mapping
     case "${DESKTOP_INPUT}" in
       gnome)
         TASKSEL_TASKS="gnome-desktop"
@@ -222,12 +221,11 @@ fi
 
 BASE_LATE_CMD="in-target chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}"
 
-### uncomment and change paths to include your scripts in build
-#if [ "${POST_INSTALL}" = "true" ]; then
-#  LATE_CMD="d-i preseed/late_command string ${BASE_LATE_CMD}; in-target mkdir -p /home/docker/core-modules; cp -a /cdrom/custom/core-modules/. /target/home/docker/core-modules/; in-target chown -R ${USERNAME}:${USERNAME} /home/docker/core-modules; in-target chmod -R +x /home/docker/core-modules"
-#else
-#  LATE_CMD="d-i preseed/late_command string ${BASE_LATE_CMD}"
-#fi
+if [ "${POST_INSTALL}" = "true" ]; then
+  LATE_CMD="d-i preseed/late_command string ${BASE_LATE_CMD}; in-target mkdir -p /home/docker/core-modules; cp -a /cdrom/custom/core-modules/. /target/home/docker/core-modules/; in-target chown -R ${USERNAME}:${USERNAME} /home/docker/core-modules; in-target chmod -R +x /home/docker/core-modules"
+else
+  LATE_CMD="d-i preseed/late_command string ${BASE_LATE_CMD}"
+fi
 
 # ------------------------------------------------------------------------------
 # 4. BUILD EXECUTION
@@ -240,12 +238,16 @@ echo "    - Bypass Menu: ${BYPASS_MENU}"
 
 sudo apt update && sudo apt install -y xorriso cpio gzip
 
-rm -rf "${WORKSPACE}"
+# Force cleanup workspace with sudo to prevent permission errors
+sudo rm -rf "${WORKSPACE}"
 mkdir -p "${ISO_FILES}"
 mkdir -p "${WORKSPACE}"
 
 echo "[+] Extracting source ISO..."
 xorriso -osirrox on -indev "${SOURCE_ISO}" -extract / "${ISO_FILES}"
+
+# Ensure write permissions across all extracted files
+chmod -R +w "${ISO_FILES}"
 
 if [ "${POST_INSTALL}" = "true" ]; then
   mkdir -p "${ISO_FILES}/custom/core-modules"
@@ -274,28 +276,23 @@ d-i debian-installer/locale string en_US.UTF-8
 d-i console-setup/ask_detect boolean false
 d-i keyboard-configuration/xkb-keymap select us
 
-# Prevent CD-ROM scanning prompts and disable additional CD checks
 d-i apt-setup/cdrom/set-first boolean false
 d-i apt-setup/cdrom/set-next boolean false
 d-i apt-setup/cdrom/set-failed boolean false
 d-i apt-setup/disable-cdrom-entries boolean true
 d-i apt-setup/services-select multiselect security, updates
 
-# Network Setup (Static IP Placeholders)
 d-i netcfg/disable_dhcp boolean true
 d-i netcfg/choose_interface select auto
-
 d-i netcfg/get_ipaddress string __NODE_IP__
 d-i netcfg/get_netmask string __NET_MASK__
 d-i netcfg/get_gateway string __NET_GATEWAY__
 d-i netcfg/get_nameservers string __NET_DNS__
 d-i netcfg/confirm_static boolean true
-
 d-i netcfg/get_hostname string __NODE_HOST__
 d-i netcfg/get_domain string local
 d-i netcfg/wireless_wep string
 
-# Mirror Settings
 d-i apt-setup/use_mirror boolean true
 d-i mirror/protocol string http
 d-i mirror/country string manual
@@ -303,14 +300,12 @@ d-i mirror/http/hostname string ${MIRROR_HOSTNAME}
 d-i mirror/http/directory string ${MIRROR_DIR}
 d-i mirror/http/proxy string
 
-# Accounts
 d-i passwd/root-login boolean false
 d-i passwd/user-fullname string ${USER_FULLNAME}
 d-i passwd/username string ${USERNAME}
 d-i passwd/user-password password ${USER_PASSWORD}
 d-i passwd/user-password-again password ${USER_PASSWORD}
 
-# Clock & Time
 d-i clock-setup/utc boolean true
 d-i time/zone string ${TZ}
 d-i clock-setup/ntp boolean true
@@ -319,7 +314,6 @@ ${PARTITION_CFG}
 
 ${DM_PRESEED}
 
-# Package Selection & Desktop
 tasksel tasksel/first multiselect ${TASKSEL_TASKS}
 d-i pkgsel/upgrade select none
 popularity-contest popularity-contest/participate boolean false
@@ -329,14 +323,12 @@ d-i pkgsel/include string ${EXTRA_PKGS} \
     wireguard curl wget ca-certificates gnupg lsb-release tcpdump \
     bind9-dnsutils git unzip zip rsync jq net-tools btop cifs-utils \
     age grep sed qrencode python3-pylast python3-pip \
-    sqlite3 ncdu iotop samba rsyslog python3-flask pv
+    sqlite3 ncdu iotop samba rsyslog python3-flask pv fail2ban
 
-# Bootloader (Suppress drive selection prompt)
 d-i grub-installer/only_debian boolean true
 d-i grub-installer/with_other_os boolean true
 d-i grub-installer/bootdev string default
 
-# Post-Install Action & Auto Reboot
 ${LATE_CMD}
 d-i finish-install/reboot_in_progress note
 EOF
@@ -348,18 +340,20 @@ sed -i "s/__NET_GATEWAY__/${NET_GATEWAY}/g" "${WORKSPACE}/preseed.cfg"
 sed -i "s/__NET_DNS__/${NET_DNS}/g" "${WORKSPACE}/preseed.cfg"
 sed -i "s/__NODE_HOST__/${NODE_HOST}/g" "${WORKSPACE}/preseed.cfg"
 
-# Remove hidden carriage returns (\r)
 tr -d '\r' < "${WORKSPACE}/preseed.cfg" > "${WORKSPACE}/preseed.cfg.tmp"
 mv "${WORKSPACE}/preseed.cfg.tmp" "${WORKSPACE}/preseed.cfg"
 
 echo "[+] Injecting preseed into initrd..."
 mkdir -p "${TMP_INITRD}"
 cd "${TMP_INITRD}"
-gzip -d < "${ISO_FILES}/install.amd/initrd.gz" | cpio --extract --make-directories --no-absolute-filenames --unconditional
+
+# Extract initrd with sudo to preserve device node permissions
+gzip -d < "${ISO_FILES}/install.amd/initrd.gz" | sudo cpio --extract --make-directories --no-absolute-filenames --unconditional
 
 # Copy updated preseed into unpacked initrd
-cp "${WORKSPACE}/preseed.cfg" ./preseed.cfg
+sudo cp "${WORKSPACE}/preseed.cfg" ./preseed.cfg
 
+# Repack initrd cleanly
 sudo bash -c "find . | cpio -H newc --create | gzip -9 > '${ISO_FILES}/install.amd/initrd.gz'"
 cd "${WORKSPACE}"
 sudo rm -rf "${TMP_INITRD}"
@@ -387,4 +381,3 @@ echo "==========================================================================
 echo "[+] SUCCESS! Output generated at:"
 echo "    ${OUTPUT_ISO}"
 echo "=============================================================================="
-
