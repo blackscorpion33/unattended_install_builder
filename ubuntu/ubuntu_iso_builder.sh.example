@@ -1,0 +1,413 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# UBUNTU SERVER AUTOMATED ISO GENERATOR
+# ==============================================================================
+
+set -euo pipefail
+
+# ------------------------------------------------------------------------------
+# 1. DEFAULT CONFIGURATION VARIABLES
+# ------------------------------------------------------------------------------
+DISTRO="ubuntu"
+INTERACTIVE_DISK="false"
+POST_INSTALL="false"
+BYPASS_MENU="false"
+
+# Node / Network Defaults
+NODE=""
+NET_MASK="24"
+NET_GATEWAY="192.168.1.1"
+NET_DNS_1="8.8.8.8"
+NET_DNS_2="1.1.1.1"
+
+WINDOWS_ISO_DIR="/mnt/e/iso/ubuntu"
+SOURCE_ISO="${WINDOWS_ISO_DIR}/ubuntu-26.04-live-server-amd64.iso"
+OUT_DIR="${WINDOWS_ISO_DIR}/complete"
+WORKDIR="${HOME}/ubuntu-iso-work"
+
+USER_PASSWORD='$6$Gh'qwfjp'' # Generate your own hash with `openssl passwd -6'
+USERNAME="********"
+USER_FULLNAME="******"
+TZ="America/Detroit"
+
+# ------------------------------------------------------------------------------
+# 2. COMMAND-LINE FLAG PARSER
+# ------------------------------------------------------------------------------
+usage() {
+  echo "Usage: $0 [OPTIONS]"
+  echo ""
+  echo "Options:"
+  echo "  -n, --node <octet>     Set Node ID / IP last octet (e.g. 232 -> IP 192.168.1.232, host ubuntu232)"
+  echo "  -i, --interactive      Manual disk partitioning during setup"
+  echo "  -p, --postinstall      Inject core-modules to /cdrom/postinstall/"
+  echo "  -b, --bypass-menu      Auto-boot installer without GRUB delay (timeout=0)"
+  echo "  -h, --help             Show this help message"
+  exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -n|--node)
+      NODE="${2}"
+      shift 2
+      ;;
+    -i|--interactive)
+      INTERACTIVE_DISK="true"
+      shift
+      ;;
+    -p|--postinstall)
+      POST_INSTALL="true"
+      shift
+      ;;
+    -b|--bypass-menu)
+      BYPASS_MENU="true"
+      shift
+      ;;
+    -h|--help)
+      usage
+      ;;
+    *)
+      echo "[-] ERROR: Unknown argument '$1'"
+      usage
+      ;;
+  esac
+done
+
+# ------------------------------------------------------------------------------
+# 2.5. DYNAMIC OUTPUT ISO FILENAME GENERATION
+# ------------------------------------------------------------------------------
+BUILD_TAGS=()
+
+if [ -n "${NODE}" ]; then
+  BUILD_TAGS+=("ubuntu-${NODE}")
+fi
+
+if [ "${INTERACTIVE_DISK}" = "true" ]; then
+  BUILD_TAGS+=("interactive")
+fi
+
+if [ "${POST_INSTALL}" = "true" ]; then
+  BUILD_TAGS+=("postinstall")
+fi
+
+if [ "${BYPASS_MENU}" = "true" ]; then
+  BUILD_TAGS+=("bypass")
+fi
+
+if [ ${#BUILD_TAGS[@]} -gt 0 ]; then
+  TAG_STRING=$(IFS=-; echo "${BUILD_TAGS[*]}")
+  OUTPUT_FILENAME="${DISTRO}-${TAG_STRING}-unattended.iso"
+else
+  OUTPUT_FILENAME="${DISTRO}-unattended.iso"
+fi
+
+ISO_OUT="${OUT_DIR}/${OUTPUT_FILENAME}"
+
+# ------------------------------------------------------------------------------
+# 3. NODE-BASED HOSTNAME / IP ASSIGNMENT
+# ------------------------------------------------------------------------------
+if [ -n "${NODE}" ]; then
+  NODE_HOST="${DISTRO}${NODE}"
+  NODE_IP="192.168.1.${NODE}"
+else
+  NODE_HOST="ubuntu-node"
+  NODE_IP="192.168.1.232"
+fi
+
+# Ensure workspace cleanup on exit or interruption
+trap 'echo ">>> Cleaning up working directory..."; rm -rf "$WORKDIR"' EXIT
+
+[[ -f "$SOURCE_ISO" ]] || { echo "[-] ERROR: Missing source ISO at $SOURCE_ISO"; exit 1; }
+
+echo ">>> Target Output ISO: ${ISO_OUT}"
+echo ">>> Cleaning workspace..."
+rm -rf "$WORKDIR"
+mkdir -p "$WORKDIR"
+
+echo ">>> Extracting original ISO contents..."
+xorriso -osirrox on -indev "$SOURCE_ISO" -extract / "$WORKDIR" >/dev/null 2>&1
+chmod -R u+w "$WORKDIR"
+
+# ------------------------------------------------------------------------------
+# 4. POST-INSTALL MODULE INJECTION (GITEA FETCH AT BUILD TIME)
+# ------------------------------------------------------------------------------
+LATE_COMMANDS_BLOCK=""
+
+if [ "${POST_INSTALL}" = "true" ]; then
+  echo ">>> Fetching latest core-modules from Gitea..."
+  mkdir -p "${WORKDIR}/postinstall"
+
+  # Clone directly from Gitea into the ISO workspace directory during ISO build
+  git -c http.sslVerify=false clone https://gitea.your_domain.com/gitea_username/repo.git "${WORKDIR}/postinstall/core-modules" || {
+    echo "[-] ERROR: Failed to clone Gitea repository during ISO build!"
+    exit 1
+  }
+
+  # Copy directly from ISO media (/cdrom) to target disk during installation
+  LATE_COMMANDS_BLOCK=$(cat << EOF
+  late-commands:
+    - mkdir -p /target/home/docker/core-modules
+    - cp -r /cdrom/postinstall/core-modules/. /target/home/docker/core-modules/
+    - curtin in-target -- chown -R ${USERNAME}:${USERNAME} /home/docker/core-modules
+    - curtin in-target -- chmod -R +x /home/docker/core-modules
+EOF
+)
+fi
+
+# ------------------------------------------------------------------------------
+# 5. STORAGE CONFIGURATION GENERATION
+# ------------------------------------------------------------------------------
+if [ "${INTERACTIVE_DISK}" = "true" ]; then
+  STORAGE_BLOCK=$(cat << 'EOF'
+  interactive-sections:
+    - storage
+EOF
+)
+else
+  STORAGE_BLOCK=$(cat << 'EOF'
+  interactive-sections: []
+  storage:
+    multipath: false
+    config:
+    - type: disk
+      id: disk-0
+      match:
+        size: largest
+      wipe: superblock-recursive
+      preserve: false
+      grub_device: true
+      ptable: gpt
+
+    - type: partition
+      id: partition-0
+      device: disk-0
+      size: 1M
+      flag: bios_grub
+      number: 1
+      preserve: false
+      grub_device: false
+
+    - type: partition
+      id: partition-1
+      device: disk-0
+      size: 2G
+      wipe: superblock
+      number: 2
+      preserve: false
+      grub_device: false
+
+    - type: format
+      id: format-0
+      fstype: ext4
+      volume: partition-1
+      preserve: false
+
+    - type: partition
+      id: partition-2
+      device: disk-0
+      size: -1
+      wipe: superblock
+      number: 3
+      preserve: false
+      grub_device: false
+
+    - type: lvm_volgroup
+      id: lvm_volgroup-0
+      name: ubuntu-vg
+      devices:
+      - partition-2
+      preserve: false
+
+    - type: lvm_partition
+      id: lvm_partition-0
+      name: ubuntu-lv
+      volgroup: lvm_volgroup-0
+      size: -1
+      wipe: superblock
+      preserve: false
+
+    - type: format
+      id: format-1
+      fstype: ext4
+      volume: lvm_partition-0
+      preserve: false
+
+    - type: mount
+      id: mount-1
+      path: /
+      device: format-1
+
+    - type: mount
+      id: mount-0
+      path: /boot
+      device: format-0
+EOF
+)
+fi
+
+# ------------------------------------------------------------------------------
+# 6. EMBED AUTOINSTALL CONFIG (USER-DATA)
+# ------------------------------------------------------------------------------
+echo ">>> Generating dynamic autoinstall config..."
+mkdir -p "$WORKDIR/nocloud" "$WORKDIR/autoinstall"
+
+USER_DATA_CONTENT=$(cat << EOF
+#cloud-config
+autoinstall:
+  version: 1
+${STORAGE_BLOCK}
+
+  packages:
+    - wireguard
+    - curl
+    - wget
+    - ca-certificates
+    - gnupg
+    - lsb-release
+    - tcpdump
+    - bind9-dnsutils
+    - git
+    - unzip
+    - zip
+    - rsync
+    - jq
+    - net-tools
+    - btop
+    - cifs-utils
+    - grep
+    - sed
+    - qrencode
+    - python3-pylast
+    - python3-pip
+    - sqlite3
+    - ncdu
+    - iotop
+    - samba
+    - rsyslog
+    - python3-flask
+    - pv
+    - age
+    - openssh-server
+    - fail2ban
+
+${LATE_COMMANDS_BLOCK}
+
+  apt:
+    disable_components: []
+    fallback: offline-install
+    geoip: true
+    preserve_sources_list: false
+
+  codecs:
+    install: false
+  drivers:
+    install: false
+
+  identity:
+    hostname: ${NODE_HOST}
+    realname: ${USER_FULLNAME}
+    username: ${USERNAME}
+    password: ${USER_PASSWORD}
+
+  kernel:
+    package: linux-generic
+  keyboard:
+    layout: us
+    toggle: null
+    variant: ''
+  locale: en_US.UTF-8
+
+  network:
+    version: 2
+    ethernets:
+      eth0:
+        match:
+          name: en*
+        dhcp4: false
+        dhcp6: false
+        addresses:
+          - ${NODE_IP}/${NET_MASK}
+        routes:
+          - to: default
+            via: ${NET_GATEWAY}
+        nameservers:
+          addresses:
+            - ${NET_DNS_1}
+            - ${NET_DNS_2}
+
+  oem:
+    install: auto
+  source:
+    id: ubuntu-server
+    search_drivers: false
+
+  ssh:
+    allow-pw: true
+    authorized-keys: []
+    install-server: true
+
+  updates: security
+EOF
+)
+
+for TARGET_DIR in "$WORKDIR/nocloud" "$WORKDIR/autoinstall"; do
+  echo "$USER_DATA_CONTENT" > "$TARGET_DIR/user-data"
+  touch "$TARGET_DIR/meta-data" "$TARGET_DIR/vendor-data"
+done
+
+# ------------------------------------------------------------------------------
+# 7. GRUB CONFIGURATION & MENU BOOT BYPASS
+# ------------------------------------------------------------------------------
+echo ">>> Prepending Automated Entry to GRUB..."
+GRUB_CFG="$WORKDIR/boot/grub/grub.cfg"
+
+TIMEOUT_VAL=2
+if [ "${BYPASS_MENU}" = "true" ]; then
+  TIMEOUT_VAL=0
+fi
+
+if [[ -f "$GRUB_CFG" ]]; then
+  TMP_GRUB=$(mktemp)
+  cat << EOF > "$TMP_GRUB"
+set timeout=${TIMEOUT_VAL}
+set default=0
+
+menuentry "Automated Unattended Installation (${NODE_HOST})" {
+    set gfxpayload=keep
+    linux /casper/vmlinuz quiet nomultipath autoinstall "ds=nocloud;s=/cdrom/nocloud" cloud-config-url=/dev/null ---
+    initrd /casper/initrd
+}
+
+EOF
+  cat "$GRUB_CFG" >> "$TMP_GRUB"
+  mv "$TMP_GRUB" "$GRUB_CFG"
+fi
+
+# ------------------------------------------------------------------------------
+# 8. BUILD FINAL ISO VIA XORRISO
+# ------------------------------------------------------------------------------
+echo ">>> Building new ISO using raw interval mapping..."
+mkdir -p "$OUT_DIR"
+rm -f "$ISO_OUT"
+
+xorriso -as mkisofs -r \
+  -V "UBUNTU_AUTOINSTALL" \
+  -o "$ISO_OUT" \
+  --grub2-mbr \
+  --interval:local_fs:0s-15s:zero_mbrpt,zero_gpt:"$SOURCE_ISO" \
+  -partition_offset 16 \
+  --mbr-force-bootable \
+  -append_partition 2 28732ac11ff8d211ba4b00a0c93ec93b --interval:local_fs:0s-0s:zero_mbrpt,zero_gpt:"$SOURCE_ISO" \
+  -appended_part_as_gpt \
+  -iso_mbr_part_type 0x02 \
+  -c boot.catalog \
+  -b boot/grub/i386-pc/eltorito.img \
+  -no-emul-boot -boot-load-size 4 -boot-info-table \
+  -eltorito-alt-boot \
+  -e '--interval:appended_partition_2:all::' \
+  -no-emul-boot \
+  "$WORKDIR" >/dev/null 2>&1
+
+echo "=============================================================================="
+echo "[+] SUCCESS! Created: ${ISO_OUT}"
+echo "=============================================================================="
