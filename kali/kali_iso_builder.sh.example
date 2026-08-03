@@ -1,0 +1,352 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# KALI LINUX AUTOMATED ISO GENERATOR
+# ==============================================================================
+
+set -e
+
+# ------------------------------------------------------------------------------
+# 1. DEFAULT CONFIGURATION VARIABLES
+# ------------------------------------------------------------------------------
+DISTRO="kali"
+DESKTOP_INPUT=""
+INTERACTIVE_DISK="false"
+POST_INSTALL="false"
+BYPASS_MENU="false"
+
+# Node Default Setup
+NODE=""
+NET_MASK="255.255.255.0"
+NET_GATEWAY="192.168.1.1"
+NET_DNS="8.8.8.8 1.1.1.1"
+
+WINDOWS_ISO_DIR="/mnt/e/iso/kali"
+SOURCE_ISO="${WINDOWS_ISO_DIR}/kali-linux-2026.2-installer-amd64.iso"
+WORKSPACE="${HOME}/${DISTRO}-custom"
+ISO_FILES="${WORKSPACE}/isofiles"
+TMP_INITRD="${WORKSPACE}/tmp_initrd"
+
+USER_PASSWORD="your_password"
+USERNAME="your_username"
+USER_FULLNAME="your_name"
+TZ="America/Detroit"
+
+MIRROR_HOSTNAME="http.kali.org"
+MIRROR_DIR="/kali"
+
+# ------------------------------------------------------------------------------
+# 2. COMMAND-LINE FLAG PARSER
+# ------------------------------------------------------------------------------
+usage() {
+  echo "Usage: $0 [OPTIONS]"
+  echo ""
+  echo "Options:"
+  echo "  -n, --node <octet>     Set Node ID / IP last octet (e.g. 236)"
+  echo "  -g, --desktop <xfce|gnome|kde|mate|lxde|lxqt|cinnamon>"
+  echo "  -i, --interactive      Manual partitioning during setup"
+  echo "  -p, --postinstall      Inject core-modules to target machine"
+  echo "  -b, --bypass-menu      Auto-boot installer without grub delay"
+  echo "  -h, --help"
+  exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -n|--node)
+      NODE="${2}"
+      shift 2
+      ;;
+    -g|--desktop)
+      DESKTOP_INPUT="${2,,}"
+      shift 2
+      ;;
+    -i|--interactive)
+      INTERACTIVE_DISK="true"
+      shift
+      ;;
+    -p|--postinstall)
+      POST_INSTALL="true"
+      shift
+      ;;
+    -b|--bypass-menu)
+      BYPASS_MENU="true"
+      shift
+      ;;
+    -h|--help)
+      usage
+      ;;
+    *)
+      echo "[-] ERROR: Unknown argument '$1'"
+      usage
+      ;;
+  esac
+done
+
+# ------------------------------------------------------------------------------
+# 3. NODE HOSTNAME/IP
+# ------------------------------------------------------------------------------
+NODE_HOST="${DISTRO}${NODE}"
+NODE_IP="192.168.1.${NODE}"
+
+# ------------------------------------------------------------------------------
+# 4. BUILD OUTPUT SUFFIX
+# ------------------------------------------------------------------------------
+SUFFIX=""
+
+if [ -n "${DESKTOP_INPUT}" ]; then
+  SUFFIX="${SUFFIX}-${DESKTOP_INPUT}"
+else
+  SUFFIX="${SUFFIX}-headless"
+fi
+
+[ -n "${NODE}" ] && SUFFIX="${SUFFIX}-kali-${NODE}"
+[ "${INTERACTIVE_DISK}" = "true" ] && SUFFIX="${SUFFIX}-interactive"
+[ "${POST_INSTALL}" = "true" ] && SUFFIX="${SUFFIX}-postinstall"
+[ "${BYPASS_MENU}" = "true" ] && SUFFIX="${SUFFIX}-nobootmenu"
+
+OUTPUT_DIR="${WINDOWS_ISO_DIR}/complete"
+OUTPUT_ISO="${OUTPUT_DIR}/${DISTRO}-unattended${SUFFIX}.iso"
+
+echo "[DEBUG] OUTPUT_ISO = ${OUTPUT_ISO}"
+
+# ------------------------------------------------------------------------------
+# 5. INSTALL BUILD REQUIREMENTS
+# ------------------------------------------------------------------------------
+sudo apt update && sudo apt install -y xorriso cpio gzip
+
+sudo rm -rf "${WORKSPACE}"
+sudo mkdir -p "${ISO_FILES}"
+mkdir -p "${OUTPUT_DIR}"
+
+# ------------------------------------------------------------------------------
+# 6. EXTRACT ISO
+# ------------------------------------------------------------------------------
+echo "[+] Extracting source Kali ISO..."
+xorriso -osirrox on -indev "${SOURCE_ISO}" -extract / "${ISO_FILES}"
+chmod -R +w "${ISO_FILES}"
+
+# ------------------------------------------------------------------------------
+# 7. GRUB / ISOLINUX BYPASS-MENU & KERNEL PRESEED PATCHING
+# ------------------------------------------------------------------------------
+if [ "${BYPASS_MENU}" = "true" ]; then
+  echo "[+] Applying GRUB/ISOLINUX bypass-menu and preseed kernel patch..."
+
+  # BIOS
+  if [ -f "${ISO_FILES}/isolinux/isolinux.cfg" ]; then
+    sed -i 's/timeout .*/timeout 0/g' "${ISO_FILES}/isolinux/isolinux.cfg"
+    sed -i 's/prompt .*/prompt 0/g' "${ISO_FILES}/isolinux/isolinux.cfg"
+    sed -i 's/default .*/default install/g' "${ISO_FILES}/isolinux/isolinux.cfg"
+    sed -i '/append/ s/$/ auto=true priority=critical desktop=none preseed\/file=\/preseed.cfg quiet ---/' "${ISO_FILES}/isolinux/isolinux.cfg"
+  fi
+
+  # UEFI
+  if [ -f "${ISO_FILES}/boot/grub/grub.cfg" ]; then
+    sed -i 's/set timeout=.*/set timeout=0/g' "${ISO_FILES}/boot/grub/grub.cfg"
+    sed -i 's/set default=.*/set default="0"/g' "${ISO_FILES}/boot/grub/grub.cfg"
+    sed -i '/linux/ s/$/ auto=true priority=critical desktop=none preseed\/file=\/preseed.cfg quiet ---/' "${ISO_FILES}/boot/grub/grub.cfg"
+  fi
+fi
+
+# ------------------------------------------------------------------------------
+# 8. DESKTOP DISPLAY MANAGER LOGIC
+# ------------------------------------------------------------------------------
+case "${DESKTOP_INPUT}" in
+  gnome) DM_NAME="gdm3" ;;
+  kde) DM_NAME="sddm" ;;
+  xfce) DM_NAME="lightdm" ;;
+  mate) DM_NAME="lightdm" ;;
+  cinnamon) DM_NAME="gdm3" ;;
+  lxqt) DM_NAME="sddm" ;;
+  lxde) DM_NAME="lightdm" ;;
+  *) DM_NAME="" ;; # Blank for headless
+esac
+
+# ------------------------------------------------------------------------------
+# 9. POSTINSTALL MODULE INJECTION & TARGET CONFIGURATION
+# ------------------------------------------------------------------------------
+POSTINSTALL_CMDS=("in-target chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}")
+
+if [ -z "${DESKTOP_INPUT}" ]; then
+  # Force CLI Multi-User Target for Headless Mode
+  POSTINSTALL_CMDS+=("in-target systemctl set-default multi-user.target")
+  POSTINSTALL_CMDS+=("in-target systemctl disable lightdm || true")
+  POSTINSTALL_CMDS+=("in-target systemctl disable gdm3 || true")
+  POSTINSTALL_CMDS+=("in-target systemctl disable sddm || true")
+else
+  # Ensure Graphical Target for Desktop Mode
+  POSTINSTALL_CMDS+=("in-target systemctl set-default graphical.target")
+fi
+
+if [ "${POST_INSTALL}" = "true" ]; then
+  mkdir -p "${ISO_FILES}/custom/core-modules"
+  cp -a /home/docker/core-modules/. "${ISO_FILES}/custom/core-modules/" || true
+
+  POSTINSTALL_CMDS+=("in-target mkdir -p /home/docker/core-modules")
+  POSTINSTALL_CMDS+=("cp -a /cdrom/custom/core-modules/. /target/home/docker/core-modules/")
+  POSTINSTALL_CMDS+=("in-target chown -R ${USERNAME}:${USERNAME} /home/docker/core-modules")
+  POSTINSTALL_CMDS+=("in-target chmod -R +x /home/docker/core-modules")
+fi
+
+JOINED_POSTINSTALL=$(printf "%s; " "${POSTINSTALL_CMDS[@]}")
+POSTINSTALL_LATE="${JOINED_POSTINSTALL%; }"
+
+# ------------------------------------------------------------------------------
+# 10. GENERATE PRESEED
+# ------------------------------------------------------------------------------
+echo "[+] Generating preseed..."
+
+cat << EOF > "${WORKSPACE}/preseed.cfg"
+# Localization
+d-i debian-installer/locale string en_US.UTF-8
+d-i console-setup/ask_detect boolean false
+d-i keyboard-configuration/xkb-keymap select us
+
+# CDROM/APT Directives
+d-i apt-setup/cdrom/set-first boolean false
+d-i apt-setup/cdrom/set-next boolean false
+d-i apt-setup/cdrom/set-failed boolean false
+d-i apt-setup/disable-cdrom-entries boolean true
+d-i apt-setup/services-select multiselect security, updates
+
+# Static Networking
+d-i netcfg/disable_dhcp boolean true
+d-i netcfg/choose_interface select auto
+d-i netcfg/get_ipaddress string ${NODE_IP}
+d-i netcfg/get_netmask string ${NET_MASK}
+d-i netcfg/get_gateway string ${NET_GATEWAY}
+d-i netcfg/get_nameservers string ${NET_DNS}
+d-i netcfg/confirm_static boolean true
+d-i netcfg/get_hostname string ${NODE_HOST}
+d-i netcfg/get_domain string local
+d-i netcfg/wireless_wep string
+
+# Mirrors
+d-i apt-setup/use_mirror boolean true
+d-i mirror/protocol string http
+d-i mirror/country string manual
+d-i mirror/http/hostname string ${MIRROR_HOSTNAME}
+d-i mirror/http/directory string ${MIRROR_DIR}
+d-i mirror/http/proxy string
+
+# User
+d-i passwd/root-login boolean false
+d-i passwd/user-fullname string ${USER_FULLNAME}
+d-i passwd/username string ${USERNAME}
+d-i passwd/user-password password ${USER_PASSWORD}
+d-i passwd/user-password-again password ${USER_PASSWORD}
+
+# Timezone
+d-i clock-setup/utc boolean true
+d-i time/zone string ${TZ}
+d-i clock-setup/ntp boolean true
+EOF
+
+# Partitioning
+if [ "${INTERACTIVE_DISK}" = "true" ]; then
+cat << EOF >> "${WORKSPACE}/preseed.cfg"
+d-i partman-auto/method string regular
+d-i partman-auto/choose_recipe select atomic
+d-i partman-auto/select_disk select ask
+d-i partman-auto/disk string ask
+d-i partman-partitioning/confirm_write_new_label boolean true
+d-i partman/confirm boolean true
+EOF
+else
+cat << EOF >> "${WORKSPACE}/preseed.cfg"
+d-i partman-auto/method string regular
+d-i partman-auto/choose_recipe select atomic
+d-i partman-partitioning/confirm_write_new_label boolean true
+d-i partman/choose_partition select finish
+d-i partman/confirm boolean true
+d-i partman/confirm_nooverwrite boolean true
+EOF
+fi
+
+# Desktop Selection vs Explicit Headless Override
+if [ -n "${DESKTOP_INPUT}" ]; then
+  case "${DESKTOP_INPUT}" in
+    gnome) echo "tasksel tasksel/first multiselect desktop-user, kali-desktop-gnome" >> "${WORKSPACE}/preseed.cfg" ;;
+    kde) echo "tasksel tasksel/first multiselect desktop-user, kali-desktop-kde" >> "${WORKSPACE}/preseed.cfg" ;;
+    xfce) echo "tasksel tasksel/first multiselect desktop-user, kali-desktop-xfce" >> "${WORKSPACE}/preseed.cfg" ;;
+    mate) echo "tasksel tasksel/first multiselect desktop-user, kali-desktop-mate" >> "${WORKSPACE}/preseed.cfg" ;;
+    cinnamon) echo "tasksel tasksel/first multiselect desktop-user, kali-desktop-cinnamon" >> "${WORKSPACE}/preseed.cfg" ;;
+    lxqt) echo "tasksel tasksel/first multiselect desktop-user, kali-desktop-lxqt" >> "${WORKSPACE}/preseed.cfg" ;;
+    lxde) echo "tasksel tasksel/first multiselect desktop-user, kali-desktop-lxde" >> "${WORKSPACE}/preseed.cfg" ;;
+  esac
+else
+  cat << EOF >> "${WORKSPACE}/preseed.cfg"
+d-i tasksel/first multiselect standard, ssh-server
+d-i tasksel/desktop string none
+EOF
+fi
+
+# Display Manager
+if [ -n "${DM_NAME}" ]; then
+  echo "d-i ${DM_NAME}/default-display-manager select ${DM_NAME}" >> "${WORKSPACE}/preseed.cfg"
+  echo "d-i shared/default-x-display-manager select ${DM_NAME}" >> "${WORKSPACE}/preseed.cfg"
+fi
+
+# Packages
+if [ -z "${DESKTOP_INPUT}" ]; then
+  cat << EOF >> "${WORKSPACE}/preseed.cfg"
+d-i pkgsel/include string kali-linux-headless openssh-server curl sudo build-essential net-tools
+EOF
+else
+  cat << EOF >> "${WORKSPACE}/preseed.cfg"
+d-i pkgsel/include string kali-linux-default openssh-server curl sudo build-essential net-tools
+EOF
+fi
+
+cat << EOF >> "${WORKSPACE}/preseed.cfg"
+d-i pkgsel/upgrade select none
+popularity-contest popularity-contest/participate boolean false
+
+# Postinstall
+d-i preseed/late_command string ${POSTINSTALL_LATE}
+
+# Bootloader
+d-i grub-installer/only_debian boolean true
+d-i grub-installer/with_other_os boolean true
+d-i grub-installer/bootdev string default
+
+d-i finish-install/reboot_in_progress note
+EOF
+
+# ------------------------------------------------------------------------------
+# 11. INJECT PRESEED INTO INITRD
+# ------------------------------------------------------------------------------
+sudo mkdir -p "${TMP_INITRD}"
+cd "${TMP_INITRD}"
+
+gzip -d < "${ISO_FILES}/install.amd/initrd.gz" | sudo cpio --extract --make-directories --no-absolute-filenames --unconditional
+
+cp "${WORKSPACE}/preseed.cfg" ./preseed.cfg
+
+sudo bash -c "find . | cpio -H newc --create | gzip -9 > '${ISO_FILES}/install.amd/initrd.gz'"
+
+cd "${WORKSPACE}"
+sudo rm -rf "${TMP_INITRD}"
+
+# ------------------------------------------------------------------------------
+# 12. REBUILD ISO
+# ------------------------------------------------------------------------------
+chmod +w "${ISO_FILES}/md5sum.txt"
+(cd "${ISO_FILES}" && find . -type f ! -name "md5sum.txt" ! -path "./isolinux/*" -exec md5sum {} + > md5sum.txt)
+
+xorriso -as mkisofs \
+  -r -V "KALI_UNAT" \
+  -o "${OUTPUT_ISO}" \
+  -J -joliet-long \
+  -b isolinux/isolinux.bin \
+  -c isolinux/boot.cat \
+  -no-emul-boot -boot-load-size 4 -boot-info-table \
+  -eltorito-alt-boot \
+  -e boot/grub/efi.img \
+  -no-emul-boot \
+  -isohybrid-gpt-basdat \
+  "${ISO_FILES}"
+
+echo "=============================================================================="
+echo "[+] SUCCESS! Your custom automated Kali ISO is built at:"
+echo "    ${OUTPUT_ISO}"
+echo "=============================================================================="
